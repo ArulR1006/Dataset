@@ -1,0 +1,174 @@
+---
+title: "NYPD Shooting Incident Analysis and Prediction"
+output:
+  html_document: default
+  pdf_document: default
+date: "2025-01-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(stringr)
+```
+
+This analysis examines a shooting incident that occurred in New York City. The data was obtained from the <https://catalog.data.gov/dataset/> website, specifically the "nypd-shooting-incident-data-historic" dataset.
+
+```{r settingUpData}
+##get the data from the server. 
+#Load the data to a dataframe
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+nypd_shooting_incident_original <- read.csv(url_in)
+```
+
+### Here is a summary of the dataset::
+
+```{r summarizeData}
+summary(nypd_shooting_incident_original)
+```
+
+After reviewing the dataset summary, I am tiding the data by creating separate columns for the year and time of each incident.  I will exclude location-related information by filtering out the corresponding columns.
+
+
+```{r tidy the dataset}
+#list of columns to remove
+remove_this = c("Longitude", "Lon_Lat", "Latitude","Y_COORD_CD", "X_COORD_CD", "LOC_CLASSFCTN_DESC", "LOC_OF_OCCUR_DESC", "PRECINCT", "JURISDICTION_CODE")
+nypd_shooting_incident_original <- nypd_shooting_incident_original %>%
+select(-all_of(remove_this))
+as_tibble(nypd_shooting_incident_original)
+```
+
+Here is the data with the removed columns.
+
+```{r analysis}
+head(nypd_shooting_incident_original,5)
+
+```
+
+I will convert the date column to a proper date format so that we can determine the minimum and maximum dates.
+
+```{r datacoversion}
+nypd_shooting_incident_original <- nypd_shooting_incident_original %>%
+mutate(Date = mdy(OCCUR_DATE))
+
+remove_this = c("OCCUR_DATE")
+nypd_shooting_incident_original <- nypd_shooting_incident_original %>%
+select(-all_of(remove_this))
+  
+
+summary(nypd_shooting_incident_original)
+```
+
+Now that we know this dataset contains data from 2006 onward, I want to analyze the data using the time of the occurrence.
+
+```{r timeofOccurence}
+nypd_shooting_incident_original <- nypd_shooting_incident_original %>%
+mutate(HOUR = substring(OCCUR_TIME, 0, 2))
+
+nypd_shooting_incident_Hour <- nypd_shooting_incident_original %>%
+  group_by(HOUR) 
+nypd_shooting_incident_Hour <- nypd_shooting_incident_Hour %>% summarize(count = n())
+
+nypd_shooting_incident_Hour
+```
+
+We can now see the number of cases occurring during each hour of the day.
+
+```{r timeofOccurenceVisualize}
+nypd_shooting_incident_Hour %>% ggplot() +
+geom_point(aes(x= HOUR, y = count), color="blue")
+```
+
+We observe that the midnight hours have a higher frequency of incidents.
+
+```{r BoroofOccurence}
+
+nypd_shooting_incident_BORO <- nypd_shooting_incident_original %>%
+  group_by(BORO) 
+nypd_shooting_incident_BORO <- nypd_shooting_incident_BORO %>% summarize(count = n())
+
+nypd_shooting_incident_BORO
+```
+
+We can now see the number of cases based on the borough.
+
+```{r BorofOccurenceVisualize}
+nypd_shooting_incident_BORO %>% ggplot() +
+geom_point(aes(x= BORO, y = count), color="red")
+```
+
+Here we see the total number of cases per year.
+
+```{r CoutnOfTheIncidentVisualize}
+
+nypd_shooting_incident_original <- nypd_shooting_incident_original %>%
+mutate(YEAR = year(Date))
+
+nypd_shooting_incident_YEAR <- nypd_shooting_incident_original %>%
+  group_by(YEAR)
+
+nypd_shooting_incident_YEAR <- nypd_shooting_incident_YEAR %>% summarize(count = n())
+
+nypd_shooting_incident_YEAR
+
+
+nypd_shooting_incident_YEAR %>% ggplot(aes(x= YEAR, y = count)) +
+geom_point()  +scale_x_discrete(limits = nypd_shooting_incident_YEAR$YEAR)
+
+
+```
+
+I will use linear modeling to predict the total number of cases for each year.
+I will use a lagged variable representing the total case count from the previous year to build the linear model.
+
+```{r LinearModelingBasedOnLagData}
+
+nypd_shooting_incident_original <- nypd_shooting_incident_original %>%
+mutate(YEAR = year(Date))
+
+nypd_shooting_incident_YEAR <- nypd_shooting_incident_original %>%
+  group_by(YEAR)
+
+nypd_shooting_incident_YEAR <- nypd_shooting_incident_YEAR %>% summarize(count = n())
+
+nypd_shooting_incident_YEAR  <- nypd_shooting_incident_YEAR  %>%
+mutate(
+lag1 = lag(count, 1),  # value lagged by 1 time period
+lag2 = lag(count, 2)   # value lagged by 2 time periods
+)
+
+model <- lm(count  ~ lag1 + lag2, data = nypd_shooting_incident_YEAR)
+summary(model)
+```
+
+### Prediction using linear model:
+To predict the total count based on previous years, I will use a linear regression model. This model will learn the relationship between the total count in a given year and the total count in the previous year. By analyzing this relationship, the model can then predict future total counts based on the most recent data.
+
+```{r PredictingBasedOnPreviousYears}
+
+nypd_shooting_incident_YEAR  <- na.omit(nypd_shooting_incident_YEAR)
+
+nypd_shooting_incident_YEAR = nypd_shooting_incident_YEAR %>% mutate(pred = predict(model))
+
+
+nypd_shooting_incident_YEAR %>% ggplot() +
+geom_point(aes(x= YEAR, y = count), color="blue")+
+geom_point(aes(x= YEAR, y = pred), color="red")+scale_x_discrete(limits = nypd_shooting_incident_YEAR$YEAR)
+```
+
+In my opinion, the model performs reasonably well, especially considering we are using only linear modeling.
+
+### Bias in the data:
+It's commonly possible to create biased models based on gender, race, or income. I'm not using any gender- or race-related attributes in my model. However, it's still possible that the nature of the data might have potential biases, like the fact that not all cases are reported in police shooting data.
+
+
+
+
+### Session information:
+```{r sessionInfo}
+sessionInfo()
+```
